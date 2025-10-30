@@ -7,6 +7,7 @@ import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
+import net.minecraft.text.LiteralText;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -33,7 +34,7 @@ public abstract class CommandManagerMixin {
         // Check for at least one emerald in player's inventory
         int emeraldSlot = findEmeraldSlot(player);
         if (emeraldSlot == -1) {
-            player.sendMessage(Text.literal("You need 1 Emerald to use /tp.").styled(s -> s.withColor(0xE53935)), false);
+            player.sendMessage(new LiteralText("You need 1 Emerald to use /tp.").styled(s -> s.withColor(0xE53935)), false);
             cir.setReturnValue(0);
             cir.cancel();
             return;
