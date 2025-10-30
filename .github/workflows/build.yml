@@ -25,7 +25,9 @@ jobs:
 
       - name: Build
         working-directory: emerald-tp-charge
-        run: gradle build --no-daemon
+        run: gradle build --no-daemon --no-parallel --max-workers=2 --stacktrace
+        env:
+          GRADLE_OPTS: -Xmx2g -XX:MaxMetaspaceSize=512m
 
       - name: Upload mod jar
         uses: actions/upload-artifact@v4
