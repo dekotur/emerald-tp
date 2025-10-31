@@ -74,12 +74,12 @@ public abstract class CommandManagerMixin {
             if (startWorld != null) {
                 player.teleport(startWorld, start.position.x, start.position.y, start.position.z, start.yaw, start.pitch);
             }
-            player.sendMessage(new LiteralText("Недостаточно эмеральдов: нужно " + cost + ", у тебя " + available + ".").styled(s -> s.withColor(0xE53935)), false);
+            player.sendMessage(new LiteralText("Not enough emeralds: need " + cost + ", you have " + available + ".").styled(s -> s.withColor(0xE53935)), false);
             return;
         }
 
         removeEmeralds(player, cost);
-        player.sendMessage(new LiteralText("Списано эмеральдов: " + cost + " (" + (int) Math.ceil(horizontalDistance) + " блоков)").styled(s -> s.withColor(0x43A047)), false);
+        player.sendMessage(new LiteralText("Charged: " + cost + " emerald(s) (" + (int) Math.ceil(horizontalDistance) + " blocks)").styled(s -> s.withColor(0x43A047)), false);
         player.currentScreenHandler.sendContentUpdates();
     }
 
