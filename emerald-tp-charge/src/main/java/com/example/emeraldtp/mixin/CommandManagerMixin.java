@@ -58,38 +58,28 @@ public abstract class CommandManagerMixin {
             return;
         }
 
-        // Compute horizontal distance in blocks between start and end
         Vec3d endPos = player.getPos();
         double dx = endPos.x - start.position.x;
         double dz = endPos.z - start.position.z;
         double horizontalDistance = MathHelper.sqrt((float)(dx * dx + dz * dz));
 
-        // If dimension changed, include a large base cost to reflect cross-dimension travel as distance-like
-        boolean dimensionChanged = !player.getWorld().getRegistryKey().equals(start.worldKey);
-        if (dimensionChanged) {
-            // Add 10,000 blocks equivalent base distance for cross-dimension
-            horizontalDistance += 10000.0;
-        }
-
         int cost = (int) Math.ceil(horizontalDistance / 1000.0);
         if (cost <= 0) {
-            return; // No movement or <1k, no charge
+            return;
         }
 
         int available = countEmeralds(player);
         if (available < cost) {
-            // Not enough emeralds: revert teleport and notify
             ServerWorld startWorld = source.getServer().getWorld(start.worldKey);
             if (startWorld != null) {
                 player.teleport(startWorld, start.position.x, start.position.y, start.position.z, start.yaw, start.pitch);
             }
-            player.sendMessage(new LiteralText("Недостаточно эмеральдов: нужно " + cost + ", у тебя " + available + ").").styled(s -> s.withColor(0xE53935)), false);
+            player.sendMessage(new LiteralText("Недостаточно эмеральдов: нужно " + cost + ", у тебя " + available + ".").styled(s -> s.withColor(0xE53935)), false);
             return;
         }
 
-        // Deduct emeralds across stacks
         removeEmeralds(player, cost);
-        player.sendMessage(new LiteralText("Списано эмеральдов: " + cost + " (" + (int)Math.ceil(horizontalDistance) + " блоков)").styled(s -> s.withColor(0x43A047)), false);
+        player.sendMessage(new LiteralText("Списано эмеральдов: " + cost + " (" + (int) Math.ceil(horizontalDistance) + " блоков)").styled(s -> s.withColor(0x43A047)), false);
         player.currentScreenHandler.sendContentUpdates();
     }
 
