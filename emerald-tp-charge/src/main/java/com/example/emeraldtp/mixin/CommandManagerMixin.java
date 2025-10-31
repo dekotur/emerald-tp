@@ -6,78 +6,133 @@ import net.minecraft.item.Items;
 import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.text.Text;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.LiteralText;
+import net.minecraft.util.math.Vec3d;
+import net.minecraft.util.math.MathHelper;
+import net.minecraft.util.registry.RegistryKey;
+import net.minecraft.world.World;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+
 @Mixin(CommandManager.class)
 public abstract class CommandManagerMixin {
 
-    @Inject(method = "execute", at = @At("HEAD"), cancellable = true)
-    private void emeraldtp$blockIfNoEmerald(ServerCommandSource source, String command, CallbackInfoReturnable<Integer> cir) throws CommandSyntaxException {
-        // Normalize leading slash if present
-        String raw = command.startsWith("/") ? command.substring(1) : command;
+    private static final Map<UUID, StartSnapshot> emeraldtp$startByPlayer = new HashMap<>();
 
-        // Match "tp" command exactly or as prefix followed by space
-        if (!(raw.equals("tp") || raw.startsWith("tp "))) {
-            return;
-        }
+    @Inject(method = "execute", at = @At("HEAD"), cancellable = false)
+    private void emeraldtp$captureStart(ServerCommandSource source, String command, CallbackInfoReturnable<Integer> cir) throws CommandSyntaxException {
+        String raw = command.startsWith("/") ? command.substring(1) : command;
+        if (!(raw.equals("tp") || raw.startsWith("tp "))) {
+            return;
+        }
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            return;
+        }
+        emeraldtp$startByPlayer.put(player.getUuid(), new StartSnapshot(player));
+    }
 
-        ServerPlayerEntity player = source.getPlayer();
-        if (player == null) {
-            return; // Non-player sources are not charged/blocked
-        }
+    @Inject(method = "execute", at = @At("RETURN"))
+    private void emeraldtp$chargeByDistance(ServerCommandSource source, String command, CallbackInfoReturnable<Integer> cir) throws CommandSyntaxException {
+        String raw = command.startsWith("/") ? command.substring(1) : command;
+        if (!(raw.equals("tp") || raw.startsWith("tp "))) {
+            return;
+        }
+        if (cir.getReturnValue() == null || cir.getReturnValue() <= 0) {
+            return;
+        }
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            return;
+        }
 
-        // Check for at least one emerald in player's inventory
-        int emeraldSlot = findEmeraldSlot(player);
-        if (emeraldSlot == -1) {
-            player.sendMessage(new LiteralText("You need 1 Emerald to use /tp.").styled(s -> s.withColor(0xE53935)), false);
-            cir.setReturnValue(0);
-            cir.cancel();
-            return;
-        }
-    }
+        StartSnapshot start = emeraldtp$startByPlayer.remove(player.getUuid());
+        if (start == null) {
+            return;
+        }
 
-    @Inject(method = "execute", at = @At("RETURN"))
-    private void emeraldtp$chargeOnSuccess(ServerCommandSource source, String command, CallbackInfoReturnable<Integer> cir) throws CommandSyntaxException {
-        // Only charge if command succeeded (affected > 0) and it's a tp command by a player
-        String raw = command.startsWith("/") ? command.substring(1) : command;
-        if (!(raw.equals("tp") || raw.startsWith("tp "))) {
-            return;
-        }
-        if (cir.getReturnValue() == null || cir.getReturnValue() <= 0) {
-            return;
-        }
-        ServerPlayerEntity player = source.getPlayer();
-        if (player == null) {
-            return;
-        }
-        int emeraldSlot = findEmeraldSlot(player);
-        if (emeraldSlot == -1) {
-            // Should not happen because we checked at HEAD, but guard anyway
-            return;
-        }
-        ItemStack stack = player.getInventory().getStack(emeraldSlot);
-        stack.decrement(1);
-        if (stack.isEmpty()) {
-            player.getInventory().setStack(emeraldSlot, ItemStack.EMPTY);
-        }
-        player.currentScreenHandler.sendContentUpdates();
-    }
+        // Compute horizontal distance in blocks between start and end
+        Vec3d endPos = player.getPos();
+        double dx = endPos.x - start.position.x;
+        double dz = endPos.z - start.position.z;
+        double horizontalDistance = MathHelper.sqrt((float)(dx * dx + dz * dz));
 
-    private static int findEmeraldSlot(ServerPlayerEntity player) {
-        // Search main inventory then hotbar for any emerald
-        for (int i = 0; i < player.getInventory().size(); i++) {
-            ItemStack s = player.getInventory().getStack(i);
-            if (!s.isEmpty() && s.isOf(Items.EMERALD)) {
-                return i;
-            }
-        }
-        return -1;
-    }
+        // If dimension changed, include a large base cost to reflect cross-dimension travel as distance-like
+        boolean dimensionChanged = !player.getWorld().getRegistryKey().equals(start.worldKey);
+        if (dimensionChanged) {
+            // Add 10,000 blocks equivalent base distance for cross-dimension
+            horizontalDistance += 10000.0;
+        }
+
+        int cost = (int) Math.ceil(horizontalDistance / 1000.0);
+        if (cost <= 0) {
+            return; // No movement or <1k, no charge
+        }
+
+        int available = countEmeralds(player);
+        if (available < cost) {
+            // Not enough emeralds: revert teleport and notify
+            ServerWorld startWorld = source.getServer().getWorld(start.worldKey);
+            if (startWorld != null) {
+                player.teleport(startWorld, start.position.x, start.position.y, start.position.z, start.yaw, start.pitch);
+            }
+            player.sendMessage(new LiteralText("Недостаточно эмеральдов: нужно " + cost + ", у тебя " + available + ").").styled(s -> s.withColor(0xE53935)), false);
+            return;
+        }
+
+        // Deduct emeralds across stacks
+        removeEmeralds(player, cost);
+        player.sendMessage(new LiteralText("Списано эмеральдов: " + cost + " (" + (int)Math.ceil(horizontalDistance) + " блоков)").styled(s -> s.withColor(0x43A047)), false);
+        player.currentScreenHandler.sendContentUpdates();
+    }
+
+    private static int countEmeralds(ServerPlayerEntity player) {
+        int total = 0;
+        for (int i = 0; i < player.getInventory().size(); i++) {
+            ItemStack stack = player.getInventory().getStack(i);
+            if (!stack.isEmpty() && stack.isOf(Items.EMERALD)) {
+                total += stack.getCount();
+            }
+        }
+        return total;
+    }
+
+    private static void removeEmeralds(ServerPlayerEntity player, int amount) {
+        int remaining = amount;
+        for (int i = 0; i < player.getInventory().size() && remaining > 0; i++) {
+            ItemStack stack = player.getInventory().getStack(i);
+            if (!stack.isEmpty() && stack.isOf(Items.EMERALD)) {
+                int remove = Math.min(stack.getCount(), remaining);
+                stack.decrement(remove);
+                if (stack.isEmpty()) {
+                    player.getInventory().setStack(i, ItemStack.EMPTY);
+                }
+                remaining -= remove;
+            }
+        }
+    }
+
+    private static class StartSnapshot {
+        final RegistryKey<World> worldKey;
+        final Vec3d position;
+        final float yaw;
+        final float pitch;
+
+        StartSnapshot(ServerPlayerEntity player) {
+            this.worldKey = player.getWorld().getRegistryKey();
+            this.position = player.getPos();
+            this.yaw = player.getYaw(1.0f);
+            this.pitch = player.getPitch(1.0f);
+        }
+    }
 }
+
 
 
